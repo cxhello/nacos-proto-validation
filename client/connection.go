@@ -120,9 +120,8 @@ func (c *Connection) receiveBiStream() {
 		msg, typeName, err := ParsePayload(payload)
 		if err != nil {
 			log.Printf("BiStream parse error (%s): %v", typeName, err)
-			// For SetupAckRequest, reply SetupAckResponse even if parse fails
 			if typeName == "SetupAckRequest" {
-				c.replySetupAck()
+				c.replySetupAck(payload)
 			}
 			continue
 		}
@@ -130,9 +129,12 @@ func (c *Connection) receiveBiStream() {
 		switch typeName {
 		case "SetupAckRequest":
 			log.Printf("Received SetupAckRequest, replying SetupAckResponse")
-			c.replySetupAck()
+			c.replySetupAck(payload)
 		case "ConnectResetRequest":
 			log.Printf("Received ConnectResetRequest (not handling, log only)")
+		case "ClientDetectionRequest":
+			log.Printf("Received ClientDetectionRequest, replying ClientDetectionResponse")
+			c.replyClientDetection(msg)
 		case "HealthCheckRequest":
 			log.Printf("Received HealthCheckRequest, ignoring in validation")
 		default:
@@ -148,17 +150,37 @@ func (c *Connection) receiveBiStream() {
 	}
 }
 
-func (c *Connection) replySetupAck() {
-	resp := &commonpb.SetupAckResponse{ResultCode: 200}
+// extractRequestId extracts requestId from a parsed request message body.
+func extractRequestId(reqPayload *pb.Payload) string {
+	req := &commonpb.HealthCheckRequest{}
+	if err := Unmarshaler.Unmarshal(reqPayload.GetBody().GetValue(), req); err == nil {
+		return req.RequestId
+	}
+	return ""
+}
+
+func (c *Connection) replySetupAck(reqPayload *pb.Payload) {
+	requestId := extractRequestId(reqPayload)
+	resp := &commonpb.SetupAckResponse{ResultCode: 200, RequestId: requestId}
 	payload, _ := BuildPayload(resp, "SetupAckResponse")
 	c.biStream.Send(payload)
 	// Signal that handshake is complete
 	select {
 	case <-c.setupDone:
-		// already closed
 	default:
 		close(c.setupDone)
 	}
+}
+
+func (c *Connection) replyClientDetection(msg proto.Message) {
+	// Extract requestId from the parsed message
+	var requestId string
+	if req, ok := msg.(*commonpb.HealthCheckRequest); ok {
+		requestId = req.RequestId
+	}
+	resp := &commonpb.HealthCheckResponse{ResultCode: 200, RequestId: requestId}
+	payload, _ := BuildPayload(resp, "ClientDetectionResponse")
+	c.biStream.Send(payload)
 }
 
 func (c *Connection) SetPushHandler(handler func(string, proto.Message)) {

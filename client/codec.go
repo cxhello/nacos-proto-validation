@@ -31,6 +31,7 @@ func init() {
 	typeRegistry["HealthCheckRequest"] = func() proto.Message { return &commonpb.HealthCheckRequest{} }
 	typeRegistry["ConnectResetRequest"] = func() proto.Message { return &commonpb.ConnectResetRequest{} }
 	typeRegistry["ErrorResponse"] = func() proto.Message { return &commonpb.ErrorResponse{} }
+	typeRegistry["ClientDetectionRequest"] = func() proto.Message { return &commonpb.HealthCheckRequest{} } // empty body, reuse HealthCheckRequest
 	// Config
 	typeRegistry["ConfigQueryResponse"] = func() proto.Message { return &configpb.ConfigQueryResponse{} }
 	typeRegistry["ConfigPublishResponse"] = func() proto.Message { return &configpb.ConfigPublishResponse{} }
