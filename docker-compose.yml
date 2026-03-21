@@ -1,0 +1,9 @@
+version: '3'
+services:
+  nacos:
+    image: nacos/nacos-server:v3.0.0
+    environment:
+      - MODE=standalone
+    ports:
+      - "8848:8848"
+      - "9848:9848"
