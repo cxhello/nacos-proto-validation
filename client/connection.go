@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	pb "github.com/cxhello/nacos-sdk-proto/go"
 	commonpb "github.com/cxhello/nacos-sdk-proto/go/common"
@@ -20,6 +21,7 @@ type Connection struct {
 	connectionId string
 	mu           sync.Mutex
 	pushHandler  func(typeName string, msg proto.Message)
+	setupDone    chan struct{} // closed when SetupAck handshake completes
 }
 
 func NewConnection(serverAddr string) (*Connection, error) {
@@ -32,6 +34,7 @@ func NewConnection(serverAddr string) (*Connection, error) {
 	c := &Connection{
 		conn:        conn,
 		requestStub: pb.NewRequestClient(conn),
+		setupDone:   make(chan struct{}),
 	}
 
 	// Step 1: ServerCheck (Unary RPC)
@@ -49,14 +52,25 @@ func NewConnection(serverAddr string) (*Connection, error) {
 	}
 	c.biStream = stream
 
-	// Step 3: ConnectionSetup
+	// Step 3: Start BiStream receiver goroutine (before setup so we can receive SetupAck)
+	go c.receiveBiStream()
+
+	// Step 4: ConnectionSetup
 	if err := c.connectionSetup(); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("connection setup: %w", err)
 	}
 
-	// Step 4: Start BiStream receiver goroutine
-	go c.receiveBiStream()
+	// Step 5: Wait for SetupAck handshake to complete
+	select {
+	case <-c.setupDone:
+		log.Printf("SetupAck handshake completed")
+	case <-time.After(5 * time.Second):
+		log.Printf("Warning: SetupAck handshake timeout, proceeding anyway")
+	}
+
+	// Give server a moment to register the connection after SetupAck
+	time.Sleep(500 * time.Millisecond)
 
 	return c, nil
 }
@@ -86,8 +100,11 @@ func (c *Connection) serverCheck() error {
 func (c *Connection) connectionSetup() error {
 	req := &commonpb.ConnectionSetupRequest{
 		ClientVersion: "nacos-proto-validation/1.0",
-		Labels:        map[string]string{"source": "proto-validation"},
-		AbilityTable:  map[string]bool{},
+		Labels: map[string]string{
+			"source": "proto-validation",
+			"module": "naming", // Required: ConnectionBasedClientManager checks this label
+		},
+		AbilityTable: map[string]bool{},
 	}
 	payload, _ := BuildPayload(req, "ConnectionSetupRequest")
 	return c.biStream.Send(payload)
@@ -135,6 +152,13 @@ func (c *Connection) replySetupAck() {
 	resp := &commonpb.SetupAckResponse{ResultCode: 200}
 	payload, _ := BuildPayload(resp, "SetupAckResponse")
 	c.biStream.Send(payload)
+	// Signal that handshake is complete
+	select {
+	case <-c.setupDone:
+		// already closed
+	default:
+		close(c.setupDone)
+	}
 }
 
 func (c *Connection) SetPushHandler(handler func(string, proto.Message)) {

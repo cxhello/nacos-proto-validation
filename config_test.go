@@ -15,7 +15,6 @@ func newClient(t *testing.T) *client.NacosClient {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	time.Sleep(2 * time.Second) // wait for handshake
 	return c
 }
 
